@@ -1,33 +1,25 @@
 import os
 import logging
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+import telebot
 import google.generativeai as genai
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# API kalitlar
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini sozlash
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Bot va Dispatcher
-bot = Bot(token=TELEGRAM_TOKEN)
-dp = Dispatcher()
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Har foydalanuvchi uchun suhbat tarixi
 chat_histories = {}
 
-@dp.message(Command("start"))
-async def start(message: types.Message):
+@bot.message_handler(commands=['start'])
+def start(message):
     user_name = message.from_user.first_name
-    await message.answer(
+    bot.reply_to(message,
         f"Assalomu alaykum, {user_name}! 👋\n\n"
         f"Men AI yordamchiman. Har qanday savolingizni bering!\n\n"
         f"📌 Komandalar:\n"
@@ -36,9 +28,9 @@ async def start(message: types.Message):
         f"/clear - Suhbatni tozalash"
     )
 
-@dp.message(Command("help"))
-async def help_command(message: types.Message):
-    await message.answer(
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    bot.reply_to(message,
         "🤖 Men AI yordamchiman!\n\n"
         "✅ Nima qila olaman:\n"
         "- Savollarga javob berish\n"
@@ -49,40 +41,34 @@ async def help_command(message: types.Message):
         "💬 Shunchaki xabar yozing!"
     )
 
-@dp.message(Command("clear"))
-async def clear(message: types.Message):
+@bot.message_handler(commands=['clear'])
+def clear(message):
     user_id = message.from_user.id
     if user_id in chat_histories:
         del chat_histories[user_id]
-    await message.answer("✅ Suhbat tarixi tozalandi!")
+    bot.reply_to(message, "✅ Suhbat tarixi tozalandi!")
 
-@dp.message()
-async def handle_message(message: types.Message):
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
     user_id = message.from_user.id
     user_text = message.text
 
-    await bot.send_chat_action(message.chat.id, "typing")
+    bot.send_chat_action(message.chat.id, 'typing')
 
     try:
         if user_id not in chat_histories:
             chat_histories[user_id] = []
 
         chat_histories[user_id].append({"role": "user", "parts": [user_text]})
-
         response = model.generate_content(chat_histories[user_id])
         reply = response.text
-
         chat_histories[user_id].append({"role": "model", "parts": [reply]})
 
-        await message.answer(reply)
+        bot.reply_to(message, reply)
 
     except Exception as e:
         logger.error(f"Xato: {e}")
-        await message.answer("❌ Xatolik yuz berdi. Qayta urinib ko'ring yoki /clear bosing.")
+        bot.reply_to(message, "❌ Xatolik yuz berdi. Qayta urinib ko'ring yoki /clear bosing.")
 
-async def main():
-    logger.info("Bot ishga tushdi! 🚀")
-    await dp.start_polling(bot)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+logger.info("Bot ishga tushdi! 🚀")
+bot.infinity_polling()
