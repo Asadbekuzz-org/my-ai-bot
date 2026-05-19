@@ -1,14 +1,12 @@
 import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 import google.generativeai as genai
 
 # Logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # API kalitlar
@@ -19,13 +17,17 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Har foydalanuvchi uchun suhbat tarixi
-chat_sessions = {}
+# Bot va Dispatcher
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
 
-# /start komandasi
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name
-    await update.message.reply_text(
+# Har foydalanuvchi uchun suhbat tarixi
+chat_histories = {}
+
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    user_name = message.from_user.first_name
+    await message.answer(
         f"Assalomu alaykum, {user_name}! 👋\n\n"
         f"Men AI yordamchiman. Har qanday savolingizni bering!\n\n"
         f"📌 Komandalar:\n"
@@ -34,9 +36,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/clear - Suhbatni tozalash"
     )
 
-# /help komandasi
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+@dp.message(Command("help"))
+async def help_command(message: types.Message):
+    await message.answer(
         "🤖 Men AI yordamchiman!\n\n"
         "✅ Nima qila olaman:\n"
         "- Savollarga javob berish\n"
@@ -47,52 +49,40 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 Shunchaki xabar yozing!"
     )
 
-# /clear komandasi
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in chat_sessions:
-        del chat_sessions[user_id]
-    await update.message.reply_text("✅ Suhbat tarixi tozalandi!")
+@dp.message(Command("clear"))
+async def clear(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in chat_histories:
+        del chat_histories[user_id]
+    await message.answer("✅ Suhbat tarixi tozalandi!")
 
-# Xabarlarni qayta ishlash
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_message = update.message.text
+@dp.message()
+async def handle_message(message: types.Message):
+    user_id = message.from_user.id
+    user_text = message.text
 
-    # Yozmoqda... ko'rsatish
-    await update.message.chat.send_action("typing")
+    await bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        # Yangi suhbat yoki mavjud suhbatni davom ettirish
-        if user_id not in chat_sessions:
-            chat_sessions[user_id] = model.start_chat(history=[])
+        if user_id not in chat_histories:
+            chat_histories[user_id] = []
 
-        chat = chat_sessions[user_id]
-        response = chat.send_message(user_message)
+        chat_histories[user_id].append({"role": "user", "parts": [user_text]})
+
+        response = model.generate_content(chat_histories[user_id])
         reply = response.text
 
-        await update.message.reply_text(reply)
+        chat_histories[user_id].append({"role": "model", "parts": [reply]})
+
+        await message.answer(reply)
 
     except Exception as e:
         logger.error(f"Xato: {e}")
-        await update.message.reply_text(
-            "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring yoki /clear bosing."
-        )
+        await message.answer("❌ Xatolik yuz berdi. Qayta urinib ko'ring yoki /clear bosing.")
 
-# Asosiy funksiya
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Komandalar
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("clear", clear))
-
-    # Xabarlar
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
+async def main():
     logger.info("Bot ishga tushdi! 🚀")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
